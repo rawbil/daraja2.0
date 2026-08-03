@@ -103,8 +103,8 @@ export async function PaybillPrompt(
       PartyA: clean_number,
       PartyB: BusinessShortCode,
       PhoneNumber: clean_number,
-      AccountReference: "accountref",
-      TransactionDesc: "txndesc",
+      AccountReference: "FORMETMENOT COLLECTIVE",
+      TransactionDesc: "prompt sent successfully",
       CallBackURL: `${domain}/api/v1/daraja/callback`,
     };
 
@@ -119,13 +119,6 @@ export async function PaybillPrompt(
     );
 
     const response_data = response.data as PromptRespose;
-
-    //     {
-    //    "BusinessShortCode":"174379",
-    //    "Password": "MTc0Mzc5YmZiMjc5TliZGJjZjE1OGU5N2RkNzFhNDY3Y2QyZTBjODkzMDU5YjEwZjc4ZTZiNzJhZGExZWQyYzkxOTIwMTYwMjE2MTY1NjI3",
-    //    "Timestamp":"20160216165627",
-    //    "CheckoutRequestID": "ws_CO_260520211133524545",
-    // }
     res.status(200).json({ success: true, data: response_data });
   } catch (error: any) {
     console.log(error);
@@ -140,8 +133,83 @@ export async function QueryTransactionStatus(
   next: NextFunction,
 ) {
   try {
+    //     {
+    //    "BusinessShortCode":"174379",
+    //    "Password": "MTc0Mzc5YmZiMjc5TliZGJjZjE1OGU5N2RkNzFhNDY3Y2QyZTBjODkzMDU5YjEwZjc4ZTZiNzJhZGExZWQyYzkxOTIwMTYwMjE2MTY1NjI3",
+    //    "Timestamp":"20160216165627",
+    //    "CheckoutRequestID": "ws_CO_260520211133524545",
+    // }
+    const dtoken = req.dtoken;
+    if (!dtoken) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Auth token missing" });
+    }
+
+    const { CheckoutRequestID } = req.body;
+    if (!CheckoutRequestID) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Checkout Request ID missing" });
+    }
+
+    const { timestamp, password } = GeneratePassword();
+    if (!timestamp || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Timestamp or password missing" });
+    }
+
+    const query_body = {
+      BusinessShortCode,
+      Password: password,
+      Timestamp: timestamp,
+      CheckoutRequestID,
+    };
+
+    const query_response = await axios.post(
+      "https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query",
+      query_body,
+      {
+        headers: {
+          Authorization: `Bearer ${dtoken}`,
+        },
+      },
+    );
+
+    console.log(query_response.data);
+
+    /**
+     * ResultCode: "1032" - cancelled , "0" - success, 4999 - pending, 1037- no response
+     */
+    const resultCode = query_response.data.ResultCode;
+    if (resultCode === "0") {
+      return res.status(200).json({
+        success: true,
+        message: query_response.data.ResultDesc,
+        status: "completed",
+      });
+    } else if (resultCode === "4999") {
+      return res.status(500).json({
+        success: false,
+        message: query_response.data.ResultDesc,
+        status: "pending",
+      });
+    } else if (resultCode === "1032") {
+      return res.status(500).json({
+        success: false,
+        message: query_response.data.ResultDesc,
+        status: "cancelled",
+      });
+    } else if (resultCode === "1037") {
+      return res.status(500).json({
+        success: false,
+        message: query_response.data.ResultDesc,
+        status: "no_response",
+      });
+    }
   } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: error.response.data });
   }
 }
 
@@ -152,6 +220,7 @@ export async function PaybillCallbackFunc(
   next: NextFunction,
 ) {
   const body = req.body;
+
 
   console.log("CallbackMetaData: ", req.body.Body.stkCallback.CallbackMetadata);
   //? Store info in database
